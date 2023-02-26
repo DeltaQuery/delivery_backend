@@ -5,23 +5,43 @@ const catchAsync = require('../utils/catchAsync')
 const AppError = require('../utils/appError')
 const filterObj = require("../utils/filterObj")
 const getDistance = require("../utils/getDistance")
- 
+
 exports.createMyRide = catchAsync(async (req, res, next) => {
-  const filteredBody = filterObj(req.body, "origin", "destiny", "note")
-  filteredBody.customer = req.user._id
-  const newRide = await Ride.create(filteredBody)
-  if(!newRide) return next(new AppError('The ride could not be created', 404))
+  if (req.user.user_type !== "customer") {
+    return next(new AppError('You cannot create a ride if you are not a customer!', 404))
+  }
 
   const customer = await User.findById(req.user._id)
-  if (customer) {
-    if(customer.current_order){
-      return next(new AppError('You cannot create a new ride is you have a delivery in process!', 404))
-    }
-    let orders_history = customer.orders_history
-    orders_history.push(newRide._id)
-    const updatedUser = await User.findByIdAndUpdate(customer._id, { orders_history: orders_history })
-    if(!updatedUser) return next(new AppError('The user could not be updated with the new orders_history', 404))
+    .populate({
+      path: 'orders_history',
+      model: Ride,
+      select: "customer rider origin destiny price ride_state note createdAt finishedAt customer_rating"
+    })
+
+  if (!customer) {
+    return next(new AppError('Your user data could not be found. Please contact customer support', 404))
   }
+
+  if (customer?.orders_history.length > 0) {
+    if (
+      customer.orders_history[customer.orders_history.length - 1].ride_state === "received"
+      ||
+      customer.orders_history[customer.orders_history.length - 1].ride_state === "processing"
+    ) {
+      return next(new AppError('You cannot create a new ride if you have a delivery in process!', 404))
+    }
+  }
+
+  const filteredBody = filterObj(req.body, "origin", "destiny", "note")
+  filteredBody.customer = req.user._id
+
+  const newRide = await Ride.create(filteredBody)
+  if (!newRide) return next(new AppError('The ride could not be created', 404))
+
+  let orders_history = customer.orders_history
+  orders_history.push(newRide._id)
+  const updatedUser = await User.findByIdAndUpdate(customer._id, { orders_history: orders_history })
+  if (!updatedUser) return next(new AppError('The user could not be updated with the new orders_history', 404))
 
   res.status(200).json({
     status: 'success',
@@ -32,13 +52,13 @@ exports.createMyRide = catchAsync(async (req, res, next) => {
 })
 
 exports.getMyRides = catchAsync(async (req, res, next) => {
-  let field 
-  if(req.user.user_type === "customer") field = "customer"
-  if(req.user.user_type === "rider") field = "rider"
-  const myRides = await Ride.find({ [field] : req.user._id })
-  .populate({ path: "customer", model: User, select: { "orders_history": 0, "photo": 0, "user_type": 0 } })
-  .populate({ path: "rider", model: User, select: { "orders_history": 0, "photo": 0, "user_type": 0 } })
-  if(!myRides) return next(new AppError('There was an error retrieving your rides', 404))
+  let field
+  if (req.user.user_type === "customer") field = "customer"
+  if (req.user.user_type === "rider") field = "rider"
+  const myRides = await Ride.find({ [field]: req.user._id })
+    .populate({ path: "customer", model: User, select: { "orders_history": 0, "photo": 0, "user_type": 0 } })
+    .populate({ path: "rider", model: User, select: { "orders_history": 0, "photo": 0, "user_type": 0 } })
+  if (!myRides) return next(new AppError('There was an error retrieving your rides', 404))
 
   res.status(200).json({
     status: 'success',
@@ -49,15 +69,25 @@ exports.getMyRides = catchAsync(async (req, res, next) => {
 })
 
 exports.updateMyRide = catchAsync(async (req, res, next) => {
+  console.log(req.body)
   const user = await User.findById(req.user._id)
+    .populate({
+      path: 'orders_history',
+      model: Ride,
+      select: "customer rider origin destiny price ride_state note createdAt finishedAt customer_rating"
+    })
+
   if (!user) {
     return next(new AppError('Your ID as an user was not found', 404))
   }
-  if (!user.current_order) {
-    return next(new AppError('There is not a current order at the moment', 404))
-  }
 
-  const originalRide = await Ride.findById(user.current_order._id)
+  let originalRide
+
+  if (req.params?.id) {
+    originalRide = await Ride.findById(req.params.id)
+  } else {
+    originalRide = await Ride.findById(user.current_order._id)
+  }
 
   if (!originalRide) {
     return next(new AppError('No ride found with that ID', 404))
@@ -73,26 +103,39 @@ exports.updateMyRide = catchAsync(async (req, res, next) => {
   if (req.user.id == originalRide.customer) {
     filteredFields = ["note", "customer_rating"]
     //if delivery is not completed, dont allow customer_rating
-    if (originalRide.ride_state === ("received" || "processing")) {
+    if (originalRide.ride_state === "received" || originalRide.ride_state === "processing" || originalRide.ride_state === "on the way") {
       filteredFields.pop()
-    }
-    //if delivery is finished, dont allow to update note
-    if (originalRide.ride_state === ("completed" || "canceled" || "failed")) {
+    } else {
+      //if delivery is finished, dont allow to update note
       filteredFields.shift()
     }
   }
 
   //if user is rider
-  if (req.user._id == originalRide.rider) {
-    filteredFields = ["ride_state", "finishedAt"]
+  if (req.user.id == originalRide.rider) {
+    filteredFields = ["ride_state", "ride_registry", "finishedAt"]
     //allow to update ride_state to completed
-    if (req.body.ride_state === ("completed" || "failed")) {
+    if (req.body.ride_state === "completed" || req.body.ride_state === "failed") {
       req.body.finishedAt = new Date()
     } else {
       filteredFields.pop()
     }
     //rider cannot update ride_state if it is completed, canceled or failed
-    if (originalRide.ride_state === ("completed" || "canceled" || "failed")) filteredFields = undefined
+    if (originalRide.ride_state === "completed" || originalRide.ride_state === "canceled" || originalRide.ride_state === "failed") {
+      filteredFields = undefined
+    }
+    //change registry according to ride_state modified
+    if (req.body.ride_state) {
+      if (req.body.ride_state === "on the way") {
+        originalRide.ride_registry.push("Your ride is on the way at: " + new Date())
+      } else if (req.body.ride_state === "completed") {
+        originalRide.ride_registry.push("Your ride was completed at: " + new Date())
+      } else if (req.body.ride_state === "failed") {
+        originalRide.ride_registry.push("Your ride failed at: " + new Date(), ". Please contact customer support.")
+      }
+      req.body.ride_registry = originalRide.ride_registry
+
+    }
   }
 
   const filteredBody = filterObj(req.body, ...filteredFields)
@@ -113,12 +156,19 @@ exports.updateMyRide = catchAsync(async (req, res, next) => {
     }
   })
 })
- 
+
 exports.cancelMyRide = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.user._id)
+    .populate({
+      path: 'orders_history',
+      model: Ride,
+      select: "customer rider origin destiny price ride_state note createdAt finishedAt customer_rating"
+    })
+
   if (!user) {
     return next(new AppError('Your ID as an user was not found', 404))
   }
+
   if (!user.current_order) {
     return next(new AppError('There is not a current order at the moment', 404))
   }
@@ -137,7 +187,7 @@ exports.cancelMyRide = catchAsync(async (req, res, next) => {
   }
 
   originalRide.ride_state = "canceled"
-  originalRide.finishedAt = new Date()
+  originalRide.ride_registry.push("Your ride was canceled at: " + new Date())
 
   const newRide = await Ride.findByIdAndUpdate(originalRide._id, originalRide, {
     new: true,
@@ -151,7 +201,7 @@ exports.cancelMyRide = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      user: newRide
+      ride: newRide
     }
   })
 })
@@ -174,7 +224,7 @@ exports.getAllRides = catchAsync(async (req, res, next) => {
       rides
     }
   })
-}) 
+})
 
 exports.getRide = catchAsync(async (req, res, next) => {
   const ride = await Ride.findById(req.params.id).populate({ path: "customer", model: User }).populate({ path: "rider", model: User })
@@ -191,21 +241,28 @@ exports.getRide = catchAsync(async (req, res, next) => {
   })
 })
 
-exports.createRide = catchAsync(async (req, res, next) => {
-  const customer = await User.findById(req.body.customer)
-  if(!customer) return next(new AppError('The customer id could not be found', 404))
-  if(customer.user_type !== "customer") return next(new AppError('The user must be a customer', 404))
-  const newRide = await Ride.create(req.body)
-  if(!newRide) return next(new AppError('The ride could not be created', 404))
+exports.cancelRide = catchAsync(async (req, res, next) => {
+  const originalRide = await Ride.findById(req.params.id)
+  if (!originalRide) return next(new AppError('The ride id you provided could not be found!', 404))
 
-  if (customer) {
-    let orders_history = customer.orders_history
-    orders_history.push(newRide._id)
-    const newCustomer = await User.findByIdAndUpdate(customer._id, { orders_history: orders_history })
-    if(!newCustomer) return next(new AppError('The customer could not be updated with the new order_history', 404))
+  if (originalRide.ride_state !== "completed" || originalRide.ride_state !== "failed" || originalRide.ride_state !== "canceled") {
+    originalRide.ride_state = "canceled"
+    originalRide.finishedAt = new Date()
+    originalRide.ride_registry.push("Your ride was canceled by Admin at: " + new Date())
+  } else {
+    return next(new AppError('You cannot cancel a ride because it is already completed, failed or canceled.', 404))
   }
 
-  res.status(201).json({
+  const newRide = await Ride.findByIdAndUpdate(originalRide._id, originalRide, {
+    new: true,
+    runValidators: true
+  })
+
+  if (!newRide) {
+    return next(new AppError('No ride found with that ID', 404))
+  }
+
+  res.status(200).json({
     status: 'success',
     data: {
       ride: newRide
@@ -217,6 +274,9 @@ exports.assignRider = catchAsync(async (req, res, next) => {
   if (req.body.rider === undefined) return next(new AppError('You didnt provide a rider id!', 404))
   const ride = await Ride.findById(req.params.id)
   if (!ride) return next(new AppError('The ride id you provided could not be found!', 404))
+  if (ride.ride_state === "completed" || ride.ride_state === "failed" || ride.ride_state === "canceled" || ride.ride_state === "on the way") {
+    return next(new AppError('You cannot assign a rider to a on the way, completed, failed or canceled ride!', 404))
+  }
   let newRider
   if (req.body.rider !== null) {
     newRider = await User.findById(req.body.rider)
@@ -225,8 +285,8 @@ exports.assignRider = catchAsync(async (req, res, next) => {
   if (req.body.rider == ride.customer.toString()) {
     return next(new AppError('You cannot assign a rider with the same id as the customer!', 404))
   }
-  /*si es null, checkear ride que quiero modificar. Si rider es undefined o undefined, no hacer nada.
-  Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_id de su orders_history */
+  /*si es null, checkear ride que quiero modificar. Si rider es undefined o null, no hacer nada.
+Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_id de su orders_history */
   if (req.body.rider === null) {
     if (ride.rider === undefined || ride.rider === null) {
       return res.status(200).json({
@@ -247,6 +307,9 @@ exports.assignRider = catchAsync(async (req, res, next) => {
         runValidators: true
       })
       ride.rider = null
+      //go back to received state since rider will be null again
+      ride.ride_state = "received"
+      ride.ride_registry = ["Your ride was received at: " + new Date()]
       const newRide = await Ride.findByIdAndUpdate(req.params.id, ride, {
         new: true,
         runValidators: true
@@ -284,7 +347,7 @@ exports.assignRider = catchAsync(async (req, res, next) => {
         new_orders_history.splice(index, 1)
       }
       //actualizar current_order (ride) para poner null rider
-      await Ride.findByIdAndUpdate(currentOrderId, { rider: null })
+      await Ride.findByIdAndUpdate(currentOrderId, { rider: null, ride_state: "received", ride_registry: ["Your ride was received at: " + new Date()] })
     }
     //añadir ride nuevo a history de newRider
     index = newRider.orders_history.findIndex(el => el._id.toString() == ride._id.toString())
@@ -313,45 +376,16 @@ exports.assignRider = catchAsync(async (req, res, next) => {
     }
   }
 
-  const newRide = await Ride.findByIdAndUpdate(req.params.id, { rider: req.body.rider }, {
-    new: true,
-    runValidators: true
-  })
-  if (!newRide) {
-    return next(new AppError('No ride found with that ID', 404))
-  }
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      newRide
-    }
-  })
-})
-
-exports.updateRide = catchAsync(async (req, res, next) => {
-  const originalRide = await Ride.findById(req.params.id)
-  if (!originalRide) return next(new AppError('The ride id you provided could not be found!', 404))
-  // 2) Name only wwanted fields names that are allowed to be updated
-  const filteredBody = filterObj(req.body, "ride_state", "note", "origin", "destiny", "finishedAt")
-
-  //if origin or destiny changed, reprice ride
-  filteredBody.price = getDistance(
-    filteredBody.origin ? filteredBody.origin : originalRide.origin,
-    filteredBody.destiny ? filteredBody.destiny : originalRide.destiny
-  )
-  //if ride_state changed, updatefinishedAt
-  if (req.body.ride_state) {
-    filteredBody.finishedAt = new Date()
+  if (ride.ride_registry.length > 1) {
+    ride.ride_registry[1] === "Your ride is processing at: " + new Date()
   } else {
-    delete filteredBody.finishedAt
+    ride.ride_registry.push("Your ride is on the way at: " + new Date())
   }
 
-  const newRide = await Ride.findByIdAndUpdate(req.params.id, filteredBody, {
+  const newRide = await Ride.findByIdAndUpdate(req.params.id, { rider: req.body.rider, ride_state: "processing" }, {
     new: true,
     runValidators: true
   })
-
   if (!newRide) {
     return next(new AppError('No ride found with that ID', 404))
   }
@@ -424,58 +458,90 @@ exports.getRideStats = catchAsync(async (req, res, next) => {
   })
 })
 
-/*exports.aliasTopRides = (req, res, next) => {
-  req.query.limit = '5'
-  req.query.sort = '-ratingsAverage,price'
-  req.query.fields = 'name,price,ratingsAverage,summary,difficulty'
-  next()
-}
+/*exports.createRide = catchAsync(async (req, res, next) => {
+  if(req.body?.rider) delete req.body.rider
+  if(req.body?.ride_state) delete req.body.ride_state
+  if(req.body?.ride_registry) delete req.body.ride_registry
 
-exports.getMonthlyPlan = catchAsync(async (req, res, next) => {
-  const year = req.params.year * 1 // 2021
+  const customer = await User.findById(req.body.customer)
+  .populate({
+    path: 'orders_history',
+    model: Ride,
+    select: "customer rider origin destiny price ride_state note createdAt finishedAt customer_rating"
+  })
+ 
+  if (!customer) return next(new AppError('The customer id could not be found', 404))
+  if (customer.user_type !== "customer") return next(new AppError('The user must be a customer', 404))
 
-  const plan = await Ride.aggregate([
-    {
-      $unwind: '$startDates'
-    },
-    {
-      $match: {
-        startDates: {
-          $gte: new Date(`${year}-01-01`),
-          $lte: new Date(`${year}-12-31`)
-        }
-      }
-    },
-    {
-      $group: {
-        _id: { $month: '$startDates' },
-        numRideStarts: { $sum: 1 },
-        rides: { $push: '$name' }
-      }
-    },
-    {
-      $addFields: { month: '$_id' }
-    },
-    {
-      $project: {
-        _id: 0
-      }
-    },
-    {
-      $sort: { numRideStarts: -1 }
-    },
-    {
-      $limit: 12
+  if (customer.orders_history.length > 0) {
+    if (
+      customer.orders_history[customer.orders_history.length - 1].ride_state === "received"
+      ||
+      customer.orders_history[customer.orders_history.length - 1].ride_state === "processing"
+    ) {
+      return next(new AppError('You cannot create a new ride for a customer if he has a delivery in process!', 404))
     }
-  ])
+  }
+
+  const newRide = await Ride.create(req.body)
+  if (!newRide) return next(new AppError('The ride could not be created', 404))
+
+  let orders_history = customer.orders_history
+  orders_history.push(newRide._id)
+  const newCustomer = await User.findByIdAndUpdate(customer._id, { orders_history: orders_history })
+  if (!newCustomer) return next(new AppError('The customer could not be updated with the new order_history', 404))
+
+  res.status(201).json({
+    status: 'success',
+    data: {
+      ride: newRide
+    }
+  })
+})*/
+/*
+exports.updateRide = catchAsync(async (req, res, next) => {
+  const originalRide = await Ride.findById(req.params.id)
+  if (!originalRide) return next(new AppError('The ride id you provided could not be found!', 404))
+  // 2) Name only wwanted fields names that are allowed to be updated
+  const filteredBody = filterObj(req.body, "ride_state", "note", "origin", "destiny")
+
+  //if origin or destiny changed, reprice ride
+  filteredBody.price = getDistance(
+    filteredBody.origin ? filteredBody.origin : originalRide.origin,
+    filteredBody.destiny ? filteredBody.destiny : originalRide.destiny
+  )
+  //if ride_state changed, updatefinishedAt
+  if (req.body.ride_state) {
+    filteredBody.finishedAt = new Date()
+    if(req.body.ride_state === "received"){
+      originalRide.ride_registry = "Your ride was received at: " + new Date()
+    } else if(req.body.ride_state === "processing"){
+      originalRide.ride_registry = [originalRide.ride_registry[0], "Your ride is processing at: " + new Date()]
+    } else if(req.body.ride_state === "canceled"){
+      originalRide.ride_registry.push("Your ride was canceled at: " + new Date())
+    } else if(req.body.ride_state === "failed"){
+      originalRide.ride_registry.push("Your ride failed at: " + new Date())
+    } else if(req.body.ride_state === "completed"){
+      originalRide.ride_registry.push("Your ride was completed at: " + new Date())
+    }
+    filteredBody.ride_registry = originalRide.ride_registry
+  } else {
+    delete filteredBody.finishedAt
+  }
+
+  const newRide = await Ride.findByIdAndUpdate(req.params.id, filteredBody, {
+    new: true,
+    runValidators: true
+  })
+
+  if (!newRide) {
+    return next(new AppError('No ride found with that ID', 404))
+  }
 
   res.status(200).json({
     status: 'success',
     data: {
-      plan
+      newRide
     }
   })
-})
-*/
-
-
+})*/

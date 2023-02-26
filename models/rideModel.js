@@ -46,8 +46,8 @@ const rideSchema = new mongoose.Schema(
       required: [true, 'A ride must have a state'],
       default: "received",
       enum: {
-        values: ["received", 'processing', 'completed', 'canceled', "failed"],
-        message: 'State is either: processing, completed, canceled, failed'
+        values: ["received", 'processing', 'completed', "on the way", 'canceled', "failed"],
+        message: 'State is either: received, processing, on the way, completed, canceled, failed'
       }
     },
     createdAt: {
@@ -62,6 +62,12 @@ const rideSchema = new mongoose.Schema(
       min: [1, 'Rating must be above 1.0'],
       max: [5, 'Rating must be below 5.0']
     },
+    ride_registry: {
+      type: [String],
+      default: function() {
+        return ["Your ride was received at: " + new Date()]
+      }
+    }
   }
 )
 

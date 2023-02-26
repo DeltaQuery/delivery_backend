@@ -74,7 +74,11 @@ const userSchema = new mongoose.Schema({
 
 userSchema.virtual('current_order').get(function () {
     if (this.orders_history && this.orders_history?.length > 0) {
-        if (this.orders_history[this.orders_history.length - 1].ride_state === ("received" || "processing")) {
+        if (this.orders_history[this.orders_history.length - 1].ride_state === "received"
+        ||
+        this.orders_history[this.orders_history.length - 1].ride_state === "processing"
+        ||
+        this.orders_history[this.orders_history.length - 1].ride_state === "on the way") {
             return this.orders_history[this.orders_history.length - 1]
         }
     }
@@ -118,14 +122,14 @@ userSchema.pre(/^find/, function (next) {
     this.find({ active: { $ne: false } })
     next()
 })*/
-
+/*
 userSchema.pre(/^find/, function (next) {
     this.populate({
         path: 'orders_history',
         select: "customer rider origin destiny price ride_state createdAt finishedAt customer_rating"
     })
     next()
-})
+})*/
 
 //virtual populate example. To populate rides without storing them in database! Be careful because it can get messed up with other populates, creating a chain of populates
 userSchema.virtual("rides", {

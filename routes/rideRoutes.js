@@ -14,7 +14,7 @@ router.route('/createMyRide').post(
   authController.protect,
   rideController.createMyRide)
 
-router.route('/updateMyRide').patch(
+router.route('/updateMyRide/:id').patch(
   authController.protect,
   rideController.updateMyRide)
 
@@ -30,16 +30,12 @@ router.route('/:id/assignRider').patch(
 router
   .route('/')
   .get(rideController.getAllRides)
-  .post(
-    authController.protect,
-    authController.restrictTo('admin'),
-    rideController.createRide)
 
 router
   .route('/:id')
   .get(authController.protect, rideController.getRide)
   .patch(
-    authController.protect, authController.restrictTo('admin', "coordinator"), rideController.updateRide)
+    authController.protect, authController.restrictTo('admin', "coordinator"), rideController.cancelRide)
   .delete(
     authController.protect,
     authController.restrictTo('admin'),

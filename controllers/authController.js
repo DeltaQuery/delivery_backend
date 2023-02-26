@@ -5,6 +5,7 @@ const User = require('./../models/userModel')
 const catchAsync = require('./../utils/catchAsync')
 const AppError = require('./../utils/appError')
 const sendEmail = require('./../utils/email')
+const uploadAvatar = require('../utils/uploadAvatar')
 
 const signToken = id => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -40,7 +41,20 @@ exports.signup = catchAsync(async (req, res, next) => {
   if (req.body?.role) {
     if (req.body.role !== "clerk") return next(new AppError('You cannot sign up as admin or coordinator!', 401))
   }
+
+  if(req.body?.user_type === "employee" && req.body?.role === undefined){
+    req.body.role = "clerk"
+  }
+
+  let avatarUrl
+  if (req.file) {
+    avatarUrl = await uploadAvatar(req.file)
+  }
+
+  req.body.photo = avatarUrl
+
   const newUser = await User.create(req.body)
+  if(!newUser) return next(new AppError('It was not possible to sign you up in the app. Please contact customer support', 400))
 
   createSendToken(newUser, 201, res)
 })
@@ -71,9 +85,6 @@ exports.logout = catchAsync(async (req, res, next) => {
       sameSite: 'strict'
     })
   
-    // Respond with a success message
-    res.status(200).json({ message: 'Logout successful' })
-
     res.status(200).json({
       status: 'success',
       message: "Logout successful"
@@ -98,8 +109,13 @@ exports.protect = catchAsync(async (req, res, next) => {
   }
 
   // 2) Verification token
-  const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET)
-
+  let decoded
+  try {
+    decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET)
+  } catch(e){
+    return next(new AppError('You are not logged in! Please log in to get access.', 401))
+  }
+  
   // 3) Check if user still exists
   const currentUser = await User.findById(decoded.id)
   if (!currentUser) {

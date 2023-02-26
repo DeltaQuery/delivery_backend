@@ -7,18 +7,18 @@ const assignRiders = async () => {
         const rides_data = await getPendingRides()
         const rides = rides_data.data.rides
         const riders_data = await getRiders()
-        const riders = Object.assign({}, riders_data.data.riders)
-        if(rides.length > 0 && riders.length > 0){
-          for (let i = 0; i < rides.length; i++) {
-                    await setRider(riders[0]._id, rides[i]._id)
-                    riders.push(riders.shift())
-                }  
+        const riders = Object.assign(riders_data.data.riders)
+        if (rides.length > 0 && riders.length > 0) {
+            for (let i = 0; i < rides.length; i++) {
+                await setRider(riders[0]._id, rides[i]._id)
+                riders.push(riders.shift())
+            }
         }
 
     } catch (e) {
         console.log("There was an error running the assignRiders function: ", e)
     } finally {
-        setTimeout(assignRiders, 1000000)
+        setTimeout(assignRiders, 100000)
     }
 }
 
@@ -67,6 +67,12 @@ const setRider = async (riderId, rideId) => {
     const ride = await Ride.findById(rideId)
     if (!ride) throw Error('The ride id you provided could not be found!', 404)
     const newRider = await User.findById(riderId)
+        .populate({
+            path: 'orders_history',
+            model: Ride,
+            select: "customer rider origin destiny price ride_state note createdAt finishedAt customer_rating"
+        })
+
     if (!newRider) throw Error('The rider id you provided could not be found!', 404)
 
     //to avoid problems with toString(), transform null or undefined in ""
@@ -75,29 +81,47 @@ const setRider = async (riderId, rideId) => {
         rideRider = ""
     }
 
-    if (rideRider.toString() != riderId.toString()) {
-        let new_orders_history
-        let index
+    let new_orders_history
+    let index
 
+    new_orders_history = newRider.orders_history
+
+    if (newRider.current_order) {
+        const currentOrderId = newRider.current_order._id
+        const newRiderOldRide = await Ride.findById(currentOrderId)
+        if (newRiderOldRide) {
+            newRiderOldRide.ride_registry.push("Your ride was completed at: " + new Date())
+            newRiderOldRide.ride_state = "completed"
+            newRiderOldRide.finishedAt = new Date()
+            await Ride.findByIdAndUpdate(currentOrderId, newRiderOldRide, {
+                runValidators: true
+            })
+        }
+    }
+    //add new ride to orders_history of newRider
+    index = newRider.orders_history.findIndex(el => el._id.toString() == ride._id.toString())
+    if (index === -1) {
         new_orders_history = newRider.orders_history
-
-        if (newRider.current_order) {
-            const currentOrderId = newRider.current_order._id
-            await Ride.findByIdAndUpdate(currentOrderId, { ride_state: "finished" })
-        }
-        //añadir ride nuevo a history de newRider
-        index = newRider.orders_history.findIndex(el => el._id.toString() == ride._id.toString())
-        if (index === -1) {
-            new_orders_history = newRider.orders_history
-            new_orders_history.push(ride._id)
-        }
-
-        await User.findByIdAndUpdate(riderId, { orders_history: new_orders_history }, {
-            runValidators: true
-        })
+        new_orders_history.push(ride._id)
     }
 
-    const newRide = await Ride.findByIdAndUpdate(rideId, { rider: riderId }, {
+    await User.findByIdAndUpdate(riderId, { orders_history: new_orders_history }, {
+        runValidators: true
+    })
+
+    const newRideNotUpdated = await Ride.findById(rideId)
+    if (!newRideNotUpdated) {
+        throw Error('No ride found with that id when trying to update!', 404)
+    }
+    newRideNotUpdated.rider = riderId
+    newRideNotUpdated.ride_state = "processing"
+    if (newRideNotUpdated.ride_registry.length > 1) {
+        newRideNotUpdated.ride_registry[1] = "Your ride is processing at: " + new Date()
+    } else {
+        newRideNotUpdated.ride_registry.push("Your ride is processing at: " + new Date())
+    }
+
+    const newRide = await Ride.findByIdAndUpdate(rideId, newRideNotUpdated, {
         new: true,
         runValidators: true
     })
