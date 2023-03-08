@@ -1,9 +1,9 @@
 const mongoose = require('mongoose')
 const dotenv = require('dotenv')
-const assignRiders = require("./utils/assignRiders")
+//const assignRiders = require("./utils/assignRiders")
 const http = require('http')
 const app = require('./app')
-const { socketServer } = require('./socketServer')
+//const { socketServer } = require('./socketServer')
 const server = http.createServer(app)
 
 process.on('uncaughtException', err => {
@@ -26,7 +26,7 @@ mongoose
   })
   .then(() => console.log('DB connection successful!'))
 
-const port = process.env.PORT || 3000
+const port = process.env.PORT || 3002
 
 //socketServer(server)
 
