@@ -1,15 +1,16 @@
 const mongoose = require('mongoose')
 const dotenv = require('dotenv')
 const assignRiders = require("./utils/assignRiders")
+const http = require('http')
+const app = require('./app')
+const { socketServer } = require('./socketServer')
+const server = http.createServer(app)
 
 process.on('uncaughtException', err => {
   console.log('UNCAUGHT EXCEPTION! 💥 Shutting down...')
   console.log(err.name, err.message)
   process.exit(1)
 })
-
-dotenv.config({ path: 'vars/config.env' })
-const app = require('./app')
 
 const DB = process.env.DATABASE.replace(
   '<PASSWORD>',
@@ -27,7 +28,9 @@ mongoose
 
 const port = process.env.PORT || 3000
 
-const server = app.listen(port, () => {
+socketServer(server)
+
+server.listen(port, () => {
   console.log(`App running on port ${port}...`)
 })
 
@@ -38,5 +41,5 @@ process.on('unhandledRejection', err => {
   console.log(err.name, err.message)
   server.close(() => {
     process.exit(1)
-  })
+  }) 
 })

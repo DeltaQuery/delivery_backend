@@ -4,7 +4,7 @@ const APIFeatures = require('../utils/apiFeatures')
 const catchAsync = require('../utils/catchAsync')
 const AppError = require('../utils/appError')
 const filterObj = require("../utils/filterObj")
-const getDistance = require("../utils/getDistance")
+const { notifyChangeToRoom } = require("../socketServer")
 
 exports.createMyRide = catchAsync(async (req, res, next) => {
   if (req.user.user_type !== "customer") {
@@ -43,6 +43,8 @@ exports.createMyRide = catchAsync(async (req, res, next) => {
   const updatedUser = await User.findByIdAndUpdate(customer._id, { orders_history: orders_history })
   if (!updatedUser) return next(new AppError('The user could not be updated with the new orders_history', 404))
 
+  notifyChangeToRoom(req.user._id.toString(), newRide._id)
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -69,7 +71,6 @@ exports.getMyRides = catchAsync(async (req, res, next) => {
 })
 
 exports.updateMyRide = catchAsync(async (req, res, next) => {
-  console.log(req.body)
   const user = await User.findById(req.user._id)
     .populate({
       path: 'orders_history',
@@ -81,12 +82,18 @@ exports.updateMyRide = catchAsync(async (req, res, next) => {
     return next(new AppError('Your ID as an user was not found', 404))
   }
 
+  if(user.user_type === "employee") return next(new AppError('Employees have no own rides to update.', 404))
+
   let originalRide
 
   if (req.params?.id) {
     originalRide = await Ride.findById(req.params.id)
   } else {
-    originalRide = await Ride.findById(user.current_order._id)
+    if(user?.current_order){
+      originalRide = await Ride.findById(user.current_order._id)
+    } else {
+      return next(new AppError('You must provide a ride id or have a current ride.', 404))
+    }
   }
 
   if (!originalRide) {
@@ -149,6 +156,9 @@ exports.updateMyRide = catchAsync(async (req, res, next) => {
     return next(new AppError('No ride found with that ID', 404))
   }
 
+  notifyChangeToRoom(req.user._id.toString(), newRide._id)
+  if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString(), newRide._id)
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -182,8 +192,8 @@ exports.cancelMyRide = catchAsync(async (req, res, next) => {
     return next(new AppError('This is not your ride. You cannot update it!', 404))
   }
 
-  if (originalRide.ride_state !== "received") {
-    return next(new AppError('You cannot cancel your ride because it is processing or finished. Please contact Customer Support', 404))
+  if (originalRide.ride_state !== "received" && originalRide.ride_state !== "processing") {
+    return next(new AppError('You cannot cancel your ride because it is finished, failed or already canceled. Please contact Customer Support', 404))
   }
 
   originalRide.ride_state = "canceled"
@@ -197,6 +207,9 @@ exports.cancelMyRide = catchAsync(async (req, res, next) => {
   if (!newRide) {
     return next(new AppError('No ride found with that ID', 404))
   }
+
+  notifyChangeToRoom(req.user._id.toString(), newRide._id)
+  if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString(), newRide._id)
 
   res.status(200).json({
     status: 'success',
@@ -262,6 +275,9 @@ exports.cancelRide = catchAsync(async (req, res, next) => {
     return next(new AppError('No ride found with that ID', 404))
   }
 
+  notifyChangeToRoom(newRide.customer.toString(), newRide._id)
+  if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString(), newRide._id)
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -272,11 +288,15 @@ exports.cancelRide = catchAsync(async (req, res, next) => {
 
 exports.assignRider = catchAsync(async (req, res, next) => {
   if (req.body.rider === undefined) return next(new AppError('You didnt provide a rider id!', 404))
+
   const ride = await Ride.findById(req.params.id)
+
   if (!ride) return next(new AppError('The ride id you provided could not be found!', 404))
+
   if (ride.ride_state === "completed" || ride.ride_state === "failed" || ride.ride_state === "canceled" || ride.ride_state === "on the way") {
     return next(new AppError('You cannot assign a rider to a on the way, completed, failed or canceled ride!', 404))
   }
+
   let newRider
   if (req.body.rider !== null) {
     newRider = await User.findById(req.body.rider)
@@ -310,10 +330,19 @@ Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_
       //go back to received state since rider will be null again
       ride.ride_state = "received"
       ride.ride_registry = ["Your ride was received at: " + new Date()]
+
       const newRide = await Ride.findByIdAndUpdate(req.params.id, ride, {
         new: true,
         runValidators: true
       })
+
+      if (!newRide) {
+        return next(new AppError('No ride found with that ID', 404))
+      }
+
+      notifyChangeToRoom(newRide.customer.toString(), newRide._id)
+      if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString(), newRide._id)
+
       return res.status(200).json({
         status: 'success',
         data: {
@@ -347,7 +376,18 @@ Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_
         new_orders_history.splice(index, 1)
       }
       //actualizar current_order (ride) para poner null rider
-      await Ride.findByIdAndUpdate(currentOrderId, { rider: null, ride_state: "received", ride_registry: ["Your ride was received at: " + new Date()] })
+      const currentRide = await Ride.findByIdAndUpdate(currentOrderId, { rider: null, ride_state: "received", ride_registry: ["Your ride was received at: " + new Date()] }, {
+        new: true,
+        runValidators: true
+      })
+
+      if (!currentRide) {
+        return next(new AppError('No ride found with that ID', 404))
+      }
+
+      notifyChangeToRoom(currentRide.customer.toString(), currentRide._id)
+      if (newRider.current_order?.rider) notifyChangeToRoom(newRider.current_order.rider.toString())
+
     }
     //añadir ride nuevo a history de newRider
     index = newRider.orders_history.findIndex(el => el._id.toString() == ride._id.toString())
@@ -386,9 +426,13 @@ Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_
     new: true,
     runValidators: true
   })
+
   if (!newRide) {
     return next(new AppError('No ride found with that ID', 404))
   }
+
+  notifyChangeToRoom(newRide.customer.toString())
+  if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString())
 
   res.status(200).json({
     status: 'success',
@@ -399,7 +443,7 @@ Si rider tiene id asignado, poner null. Tomar ese rider previo y retirarle ride_
 })
 
 exports.deleteRide = catchAsync(async (req, res, next) => {
-  const originalRide = await Ride.findById(req.params.id)
+  const originalRide = await Ride.findById(req.params.id) 
 
   if (!originalRide) {
     return next(new AppError('No ride found with that ID', 404))
@@ -430,6 +474,9 @@ exports.deleteRide = catchAsync(async (req, res, next) => {
   }
 
   await Ride.findByIdAndDelete(req.params.id)
+
+  notifyChangeToRoom(originalRide.customer.toString(), originalRide._id)
+  if (originalRide?.rider) notifyChangeToRoom(originalRide.rider.toString(), originalRide._id)
 
   res.status(204).json({
     status: 'success',

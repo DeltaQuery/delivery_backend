@@ -4,6 +4,7 @@ const catchAsync = require('../utils/catchAsync')
 const AppError = require('../utils/appError')
 const filterObj = require("../utils/filterObj")
 const uploadAvatar = require('../utils/uploadAvatar')
+const { notifyChangeToRoom } = require("../socketServer")
 
 exports.getAllUsers = catchAsync(async (req, res, next) => {
   const users = await User.find()
@@ -81,6 +82,8 @@ exports.updateMe = catchAsync(async (req, res, next) => {
 
   if(!updatedUser) return next(new AppError('The user could not be updated', 400))
 
+  notifyChangeToRoom(updatedUser._id.toString())
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -144,6 +147,8 @@ exports.updateUser = catchAsync(async (req, res, next) => {
   if (!user) {
     return next(new AppError('No user found with that ID', 404))
   }
+
+  notifyChangeToRoom(user._id.toString())
 
   res.status(200).json({
     status: 'success',

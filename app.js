@@ -11,6 +11,7 @@ const AppError = require('./utils/appError')
 const globalErrorHandler = require('./controllers/errorController')
 const rideRouter = require('./routes/rideRoutes')
 const userRouter = require('./routes/userRoutes')
+
 const app = express()
 
 const corsConfig = {

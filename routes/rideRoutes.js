@@ -14,7 +14,7 @@ router.route('/createMyRide').post(
   authController.protect,
   rideController.createMyRide)
 
-router.route('/updateMyRide/:id').patch(
+router.route('/updateMyRide/:id?').patch(
   authController.protect,
   rideController.updateMyRide)
 

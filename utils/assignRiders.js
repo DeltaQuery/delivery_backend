@@ -1,6 +1,7 @@
 
 const Ride = require('../models/rideModel')
 const User = require('../models/userModel')
+const { notifyChangeToRoom } = require("../socketServer")
 
 const assignRiders = async () => {
     try {
@@ -18,13 +19,18 @@ const assignRiders = async () => {
     } catch (e) {
         console.log("There was an error running the assignRiders function: ", e)
     } finally {
-        setTimeout(assignRiders, 100000)
+        setTimeout(assignRiders, 12000)
     }
 }
 
 const getPendingRides = async () => {
     try {
-        const rides = await Ride.find({ rider: { $eq: undefined } }).sort({ startedAt: 1 })
+        const rides = await Ride.find({
+            rider: undefined,
+            ride_state: "received"
+        }).sort({ startedAt: 1 })
+
+        //const rides = await Ride.find({ rider: { $eq: undefined } }).sort({ startedAt: 1 })
 
         return {
             results: rides.length,
@@ -93,9 +99,14 @@ const setRider = async (riderId, rideId) => {
             newRiderOldRide.ride_registry.push("Your ride was completed at: " + new Date())
             newRiderOldRide.ride_state = "completed"
             newRiderOldRide.finishedAt = new Date()
-            await Ride.findByIdAndUpdate(currentOrderId, newRiderOldRide, {
+            const updatedOldRide = await Ride.findByIdAndUpdate(currentOrderId, newRiderOldRide, {
                 runValidators: true
             })
+
+            if (!updatedOldRide) throw Error('The ride could not be updated!', 404)
+
+            notifyChangeToRoom(updatedOldRide.customer.toString())
+            if (updatedOldRide?.rider) notifyChangeToRoom(updatedOldRide.rider.toString())
         }
     }
     //add new ride to orders_history of newRider
@@ -128,6 +139,9 @@ const setRider = async (riderId, rideId) => {
     if (!newRide) {
         throw Error('No ride found with that id when trying to update!', 404)
     }
+
+    notifyChangeToRoom(newRide.customer.toString())
+    if (newRide?.rider) notifyChangeToRoom(newRide.rider.toString())
 
     return newRide
 }
