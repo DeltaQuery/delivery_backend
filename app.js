@@ -1,5 +1,5 @@
 const express = require('express')
-/*const cors = require('cors')
+const cors = require('cors')
 const morgan = require('morgan')
 const rateLimit = require('express-rate-limit')
 const helmet = require('helmet')
@@ -10,10 +10,10 @@ const hpp = require('hpp')
 const AppError = require('./utils/appError')
 const globalErrorHandler = require('./controllers/errorController')
 const rideRouter = require('./routes/rideRoutes')
-const userRouter = require('./routes/userRoutes')*/
+const userRouter = require('./routes/userRoutes')
 
 const app = express()
-/*
+
 const corsConfig = {
   credentials: true,
   origin: true,
@@ -71,6 +71,6 @@ app.all('*', (req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404))
 })
 
-app.use(globalErrorHandler)*/
+app.use(globalErrorHandler)
 
 module.exports = app
