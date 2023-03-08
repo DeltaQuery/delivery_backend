@@ -28,13 +28,13 @@ mongoose
 
 const port = process.env.PORT || 3000
 
-socketServer(server)
+//socketServer(server)
 
 server.listen(port, () => {
   console.log(`App running on port ${port}...`)
 })
 
-assignRiders()
+//assignRiders()
 
 process.on('unhandledRejection', err => {
   console.log('UNHANDLED REJECTION! 💥 Shutting down...')
